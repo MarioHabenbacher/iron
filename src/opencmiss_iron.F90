@@ -625,7 +625,7 @@ MODULE OpenCMISS_Iron
   !> \addtogroup OpenCMISS_BasisTypes OpenCMISS::Iron::Basis::BasisTypes
   !> \brief Basis definition type parameters.
   !> \see OpenCMISS::Iron::BasisConstants,OpenCMISS
-  !>@{ 
+  !>@{
   INTEGER(INTG), PARAMETER :: CMFE_BASIS_LAGRANGE_HERMITE_TP_TYPE = BASIS_LAGRANGE_HERMITE_TP_TYPE !<Lagrange-Hermite tensor product basis type \see OpenCMISS_BasisTypes,OpenCMISS
   INTEGER(INTG), PARAMETER :: CMFE_BASIS_SIMPLEX_TYPE = BASIS_SIMPLEX_TYPE !<Simplex basis type \see OpenCMISS_BasisTypes,OpenCMISS
   INTEGER(INTG), PARAMETER :: CMFE_BASIS_SERENDIPITY_TYPE = BASIS_SERENDIPITY_TYPE !<Serendipity basis type \see OpenCMISS_BasisTypes,OpenCMISS
@@ -1452,7 +1452,7 @@ MODULE OpenCMISS_Iron
     MODULE PROCEDURE cmfe_ControlLoop_AbsoluteToleranceSetObj
   END INTERFACE cmfe_ControlLoop_AbsoluteToleranceSet
 
-  !>Returns the number of iterations for a time control loop. If the returned value is 0, that means that the number has not yet been computed. 
+  !>Returns the number of iterations for a time control loop. If the returned value is 0, that means that the number has not yet been computed.
   INTERFACE cmfe_ControlLoop_NumberOfIterationsGet
     MODULE PROCEDURE cmfe_ControlLoop_NumberOfIterationsGetNumber0
     MODULE PROCEDURE cmfe_ControlLoop_NumberOfIterationsGetNumber1
@@ -1548,7 +1548,7 @@ MODULE OpenCMISS_Iron
   PUBLIC cmfe_ControlLoop_AbsoluteToleranceSet
 
   PUBLIC cmfe_ControlLoop_NumberOfIterationsGet, cmfe_ControlLoop_NumberOfIterationsSet
-  
+
   PUBLIC cmfe_ControlLoop_NumberOfSubLoopsGet,cmfe_ControlLoop_NumberOfSubLoopsSet
 
   PUBLIC cmfe_ControlLoop_OutputTypeGet,cmfe_ControlLoop_OutputTypeSet
@@ -2539,6 +2539,8 @@ MODULE OpenCMISS_Iron
     & EQUATIONS_SET_REFERENCE_STATE_TRANSVERSE_GUCCIONE_SUBTYPE !< Transverse isotropic Guccione constitutive law for finite elasticity equstions set subtype \see OpenCMISS_EquationsSetSubtypes,OpenCMISS
   INTEGER(INTG), PARAMETER :: CMFE_EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE = &
     & EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE !< Transverse isotropic Guccione constitutive law with active contraction subtype \see OpenCMISS_EquationsSetSubtypes,OpenCMISS
+  INTEGER(INTG), PARAMETER :: CMFE_EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE = &
+    & EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE !< Transverse isotropic Guccione constitutive law with active contraction subtype without length dependence \see OpenCMISS_EquationsSetSubtypes,OpenCMISS
   INTEGER(INTG), PARAMETER :: CMFE_EQUATIONS_SET_INCOMPRESS_FINITE_ELASTICITY_DARCY_SUBTYPE= &
     & EQUATIONS_SET_INCOMPRESSIBLE_FINITE_ELASTICITY_DARCY_SUBTYPE !<Incompressible version for finite elasticity coupled with Darcy equations set subtype \see OpenCMISS_EquationsSetSubtypes,OpenCMISS
   INTEGER(INTG), PARAMETER :: CMFE_EQUATIONS_SET_ELASTICITY_DARCY_INRIA_MODEL_SUBTYPE= &
@@ -3086,6 +3088,7 @@ MODULE OpenCMISS_Iron
     & CMFE_EQUATIONS_SET_INCOMPRESSIBLE_ELASTICITY_DRIVEN_MR_SUBTYPE, &
     & CMFE_EQUATIONS_SET_INCOMPRESS_ELAST_MULTI_COMP_DARCY_SUBTYPE,CMFE_EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE, &
     & CMFE_EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE, &
+    & CMFE_EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE, &
     & CMFE_EQUATIONS_SET_ACTIVE_STRAIN_SUBTYPE, &
     & CMFE_EQUATIONS_SET_MULTISCALE_ACTIVE_STRAIN_SUBTYPE, &
     & CMFE_EQUATIONS_SET_REFERENCE_STATE_TRANSVERSE_GUCCIONE_SUBTYPE, &
@@ -3191,7 +3194,7 @@ MODULE OpenCMISS_Iron
     & CMFE_EQUATIONS_SET_DERIVED_L_CAUCHY_GREEN_DEFORMATION,CMFE_EQUATIONS_SET_DERIVED_GREEN_LAGRANGE_STRAIN, &
     & CMFE_EQUATIONS_SET_DERIVED_CAUCHY_STRESS,CMFE_EQUATIONS_SET_DERIVED_FIRST_PK_STRESS, &
     & CMFE_EQUATIONS_SET_DERIVED_SECOND_PK_STRESS
- 
+
   PUBLIC CMFE_EQUATIONS_MATRIX_STIFFNESS,CMFE_EQUATIONS_MATRIX_DAMPING,CMFE_EQUATIONS_MATRIX_MASS
 
   PUBLIC CMFE_EQUATIONS_SET_NO_OUTPUT,CMFE_EQUATIONS_SET_PROGRESS_OUTPUT
@@ -3498,7 +3501,7 @@ MODULE OpenCMISS_Iron
     MODULE PROCEDURE cmfe_EquationsSet_DerivedVariableSetNumber
     MODULE PROCEDURE cmfe_EquationsSet_DerivedVariableSetObj
   END INTERFACE cmfe_EquationsSet_DerivedVariableSet
-  
+
   !>Evaluate a tensor at a given element Gauss location.
   INTERFACE cmfe_EquationsSet_TensorInterpolateGaussPoint
     MODULE PROCEDURE cmfe_EquationsSet_TensorInterpolateGaussPointNumber
@@ -17010,7 +17013,7 @@ CONTAINS
   !
   !================================================================================================================================
   !
-  
+
   !>Gets the number of iterations for a time control loop identified by user number.
   SUBROUTINE cmfe_ControlLoop_NumberOfIterationsGetNumber0(problemUserNumber,controlLoopIdentifier,numberOfIterations,err)
     !DLLEXPORT(cmfe_ControlLoop_NumberOfIterationsGetNumber0)
@@ -17037,7 +17040,7 @@ CONTAINS
       localError="A problem with an user number of "//TRIM(NumberToVString(problemUserNumber,"*",err,error))//" does not exist."
       CALL FlagError(localError,err,error,*999)
     END IF
-    
+
     EXITS("cmfe_ControlLoop_NumberOfItGetNumber0")  ! name is abbreviated because of maximum line length
     RETURN
 999 ERRORSEXITS("cmfe_ControlLoop_NumberOfItGetNumber0",err,error)  ! name is abbreviated because of maximum line length
@@ -17049,7 +17052,7 @@ CONTAINS
   !
   !================================================================================================================================
   !
-  
+
   !>Gets the number of iterations for a time control loop identified by user numbers.
   SUBROUTINE cmfe_ControlLoop_NumberOfIterationsGetNumber1(problemUserNumber,controlLoopIdentifiers,numberOfIterations,err)
     !DLLEXPORT(cmfe_ControlLoop_NumberOfIterationsGetNumber1)
@@ -17114,7 +17117,7 @@ CONTAINS
   !
   !================================================================================================================================
   !
-  
+
   !>Sets the number of iterations for a time control loop identified by user number.
   SUBROUTINE cmfe_ControlLoop_NumberOfIterationsSetNumber0(problemUserNumber,controlLoopIdentifier,numberOfIterations,err)
     !DLLEXPORT(cmfe_ControlLoop_NumberOfIterationsSetNumber0)
@@ -17141,7 +17144,7 @@ CONTAINS
       localError="A problem with an user number of "//TRIM(NumberToVString(problemUserNumber,"*",err,error))//" does not exist."
       CALL FlagError(localError,err,error,*999)
     END IF
-    
+
     EXITS("cmfe_ControlLoop_NumberOfItSetNumber0")        ! name is abbreviated because of maximum line length
     RETURN
 999 ERRORSEXITS("cmfe_ControlLoop_NumberOfItSetNumber0",err,error)    ! name is abbreviated because of maximum line length
@@ -17153,7 +17156,7 @@ CONTAINS
   !
   !================================================================================================================================
   !
-  
+
   !>Sets the number of iterations for a time control loop identified by user numbers.
   SUBROUTINE cmfe_ControlLoop_NumberOfIterationsSetNumber1(problemUserNumber,controlLoopIdentifiers,numberOfIterations,err)
     !DLLEXPORT(cmfe_ControlLoop_NumberOfIterationsSetNumber1)
@@ -25182,9 +25185,9 @@ CONTAINS
   !>Setting Jacobian matrix evaluation type
   SUBROUTINE cmfe_Equations_JacobianMatricesTypesSet(equations,jacobianType,err)
     !DLLEXPORT(cmfe_Equations_JacobianMatricesTypesSet)
-    
+
     !Argument variables
-    TYPE(cmfe_EquationsType), INTENT(IN) :: equations !<The equations to set the Jacobian evaluation type for. 
+    TYPE(cmfe_EquationsType), INTENT(IN) :: equations !<The equations to set the Jacobian evaluation type for.
     INTEGER(INTG), INTENT(IN) :: jacobianType !<The type of Jacobian evaluation. \see OpenCMISS_EquationsJacobianCalculated
     INTEGER(INTG), INTENT(OUT) :: err !<The error code
     !Local variables
@@ -29947,7 +29950,7 @@ CONTAINS
     !Argument variables
     TYPE(cmfe_FieldType), INTENT(IN) :: geometricField !<The geometric field to obtain the volume from
     INTEGER(INTG),  INTENT(IN) :: elementNumber !<The element to get the volume for
-    REAL(DP), INTENT(OUT) :: elementVolume !<The volume of the chosen element 
+    REAL(DP), INTENT(OUT) :: elementVolume !<The volume of the chosen element
     INTEGER(INTG), INTENT(OUT) :: err !<The error code.
     !Local variables
 
