@@ -804,10 +804,11 @@ CONTAINS
       TEMPTERM1=0.5_DP*C(1)*EXP(0.5_DP*DOT_PRODUCT(E,DQ_DE))
       !Calculate 2nd Piola tensor (in Voigt form)
       STRESS_TENSOR=TEMPTERM1*DQ_DE + P*AZUv
-      !lambda = 1.0_DP
-      !lambda(1) = SQRT(AZL(1,1))
       IF(EQUATIONS_SET%specification(3)==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE .OR. &
         & EQUATIONS_SET%specification(3)==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE) THEN
+      lambda(1) = 1/(SQRT(2.0_DP*E(1)+1)) !deriv of lambda wrt E
+      lambda(2) = 1/(SQRT(2.0_DP*E(2)+1)) !deriv of lambda wrt E
+      lambda(3) = 1/(SQRT(2.0_DP*E(3)+1)) !deriv of lambda wrt E
         !add active contraction stress values
         CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,ERR,ERROR,*999)
         DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
@@ -6573,8 +6574,7 @@ CONTAINS
       !add active contraction stress value to the trace of the stress tensor - basically adding to hydrostatic pressure.
       !the active stress is stored inside the independent field that has been set up in the user program.
       !for generality we could set up 3 components in independent field for 3 different active stress components
-        !lambda = 1.0_DP
-        lambda = SQRT(AZL(1,1))
+        lambda(1) = SQRT(AZL(1,1))
         lambda(2) = SQRT(AZL(2,2))
         lambda(3) = SQRT(AZL(3,3))
         CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,err,error,*999)
