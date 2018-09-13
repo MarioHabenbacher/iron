@@ -2917,7 +2917,6 @@ CONTAINS
         IF(componentIdx==4) THEN
           delta=(1.0_DP)*equationsSet%equations%jacobianFiniteDifferenceStepSize
         ENDIF
-        WRITE(*, *) 'Hey there, I am delta', delta
         elementsTopology=>columnVariable%COMPONENTS(componentIdx)%DOMAIN%TOPOLOGY%ELEMENTS
         componentInterpolationType=columnVariable%COMPONENTS(componentIdx)%INTERPOLATION_TYPE
         SELECT CASE(componentInterpolationType)

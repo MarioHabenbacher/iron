@@ -804,11 +804,10 @@ CONTAINS
       TEMPTERM1=0.5_DP*C(1)*EXP(0.5_DP*DOT_PRODUCT(E,DQ_DE))
       !Calculate 2nd Piola tensor (in Voigt form)
       STRESS_TENSOR=TEMPTERM1*DQ_DE + P*AZUv
+      !lambda = 1.0_DP
+      !lambda(1) = SQRT(AZL(1,1))
       IF(EQUATIONS_SET%specification(3)==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE .OR. &
         & EQUATIONS_SET%specification(3)==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE) THEN
-      lambda(1) = 1/(SQRT(2.0_DP*E(1)+1)) !deriv of lambda wrt E
-      lambda(2) = 1/(SQRT(2.0_DP*E(2)+1)) !deriv of lambda wrt E
-      lambda(3) = 1/(SQRT(2.0_DP*E(3)+1)) !deriv of lambda wrt E
         !add active contraction stress values
         CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,ERR,ERROR,*999)
         DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
@@ -5239,6 +5238,7 @@ CONTAINS
     TYPE(FIELD_INTERPOLATED_POINT_TYPE), POINTER :: DEPENDENT_INTERPOLATED_POINT,MATERIALS_INTERPOLATED_POINT
     TYPE(FIELD_INTERPOLATED_POINT_TYPE), POINTER :: DARCY_DEPENDENT_INTERPOLATED_POINT,GEOMETRIC_INTERPOLATED_POINT
     TYPE(FIELD_INTERPOLATED_POINT_TYPE), POINTER :: INDEPENDENT_INTERPOLATED_POINT
+    TYPE(FIELD_INTERPOLATED_POINT_TYPE), POINTER :: FIBRE_INTERPOLATED_POINT
     REAL(DP), INTENT(OUT) :: CAUCHY_TENSOR(:,:)
     REAL(DP), INTENT(OUT) :: Jznu !Determinant of deformation gradient tensor (AZL)
     REAL(DP), INTENT(IN) :: DZDNU(3,3) !Deformation gradient tensor at the Guass point
@@ -5251,6 +5251,28 @@ CONTAINS
     REAL(DP) :: activation
     REAL(DP) :: AZL(3,3),AZU(3,3),DZDNUT(3,3),PIOLA_TENSOR(3,3),E(3,3),P,IDENTITY(3,3),AZLT(3,3),AZUT(3,3)
     REAL(DP) :: AZL_SQUARED(3,3)
+    REAL(DP) :: CAUCHY_TENSOR_DEFIBRE(3,3) !Cauchy stress wrt deformed orthogonal fibre coordinates
+    REAL(DP) :: CAUCHY_TENSOR_DEFGEO(3,3) !Cauchy stress wrt deformed geometric coordinates
+    TYPE(FIELD_INTERPOLATED_POINT_METRICS_TYPE), POINTER :: GEOMETRIC_INTERPOLATED_POINT_METRICS
+    TYPE(FIELD_INTERPOLATED_POINT_METRICS_TYPE), POINTER :: DEPENDENT_INTERPOLATED_POINT_METRICS
+    REAL(DP) :: XR(3,3), XD(3,3) ! geometrical coordinates with respect to xi
+    REAL(DP) :: NUR(3,3), NUD(3,3), NUDO(3,3) ! material coordinates with respect to xi
+    INTEGER(INTG) :: numberOfXDimensions, numberOfXiDimensions, numberOfNuDimensions ! dimensions of coordinate systems
+    REAL(DP) :: DXDNU(3,3) ! tensor to transform from the geometric coordinate system to the material coordinate system
+    REAL(DP) :: DNUDX(3,3) ! tensor to transform from the material system to the geometric coordinate system
+    REAL(DP) :: DNUDXI(3,3) ! tensor to transform from the material system to the xi coordinate system
+    REAL(DP) :: DXIDNU(3,3) ! tensor to transform from the xi coordinate system to the material coordinate system
+    REAL(DP) :: DNUDZ(3,3) !Inverse of the deformation gradient DZDNU
+    REAL(DP) :: DET_NUD, DET_NUDO ! determinant of deformed material coordinates, transformation tensor
+    REAL(DP) :: NUDO_INV(3,3) ! inverse of the orthogonal deformed material coordinates
+    REAL(DP) :: TEMP_ROT(3,3) ! just some temporary storage
+    REAL(DP) :: DZDNUO(3,3) ! tensor to transform from orthogonal deformed material coordinates to geometric coordinates
+    REAL(DP) :: DZDNUOT(3,3) ! transpose of DZDNUO
+    REAL(DP) :: fibre_def(3), sheet_def(3), normal_def(3) ! deformed material coordinate vectors
+    REAL(DP) :: DZDX(3,3) ! deformation gradient mapping the geometric coordinates
+    REAL(DP) :: EA(3,3)! euler almansi strain tensor
+    REAL(DP) :: CDT(3,3), DET_CDT ! the cauchy deformation tensor
+    REAL(DP) :: AZL_INV(3,3) ! (F'*F)^-1
     REAL(DP) :: I1,I2,I3            !Invariants, if needed
     REAL(DP) :: ACTIVE_STRESS_11,ACTIVE_STRESS_22,ACTIVE_STRESS_33 !Active stress to be copied in from independent field.
     REAL(DP) :: TEMP(3,3),TEMPTERM  !Temporary variables
@@ -6574,30 +6596,34 @@ CONTAINS
       !add active contraction stress value to the trace of the stress tensor - basically adding to hydrostatic pressure.
       !the active stress is stored inside the independent field that has been set up in the user program.
       !for generality we could set up 3 components in independent field for 3 different active stress components
-        lambda(1) = SQRT(AZL(1,1))
-        lambda(2) = SQRT(AZL(2,2))
-        lambda(3) = SQRT(AZL(3,3))
-        CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,err,error,*999)
-        DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
-          SELECT CASE(FIELD_VARIABLE%COMPONENTS(component_idx)%INTERPOLATION_TYPE)
-          CASE(FIELD_CONSTANT_INTERPOLATION)
-            VALUE=0.1_DP
-          CASE(FIELD_GAUSS_POINT_BASED_INTERPOLATION)
-            dof_idx=FIELD_VARIABLE%COMPONENTS(component_idx)%PARAM_TO_DOF_MAP%GAUSS_POINT_PARAM2DOF_MAP% &
-              & GAUSS_POINTS(GAUSS_POINT_NUMBER,ELEMENT_NUMBER)
-            CALL FIELD_PARAMETER_SET_GET_LOCAL_DOF(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE, &
-              & FIELD_VALUES_SET_TYPE,dof_idx,VALUE,err,error,*999)
-          CASE(FIELD_ELEMENT_BASED_INTERPOLATION)
-            VALUE=INDEPENDENT_INTERPOLATED_POINT%VALUES(component_idx,NO_PART_DERIV)
-          CASE DEFAULT
-            LOCAL_ERROR="This independent field variable interpolation type is not supported."
-            CALL FlagError(LOCAL_ERROR,err,error,*999)
-          END SELECT
-          PIOLA_TENSOR(component_idx,component_idx)=PIOLA_TENSOR(component_idx,component_idx)+ &
-            & VALUE*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))/DZDNU(component_idx,component_idx)
+        !lambda = 1.0_DP
+        !lambda(1) = SQRT(AZL(1,1))
+        !lambda(2) = SQRT(AZL(2,2))
+        !lambda(3) = SQRT(AZL(3,3))
+        !CALL Invert(DZDNU,DNUDZ,Jznu,err,error,*999)
+        !CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,err,error,*999)
+        !DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+        !  SELECT CASE(FIELD_VARIABLE%COMPONENTS(component_idx)%INTERPOLATION_TYPE)
+        !  CASE(FIELD_CONSTANT_INTERPOLATION)
+        !    VALUE=0.1_DP
+        !  CASE(FIELD_GAUSS_POINT_BASED_INTERPOLATION)
+        !    dof_idx=FIELD_VARIABLE%COMPONENTS(component_idx)%PARAM_TO_DOF_MAP%GAUSS_POINT_PARAM2DOF_MAP% &
+        !      & GAUSS_POINTS(GAUSS_POINT_NUMBER,ELEMENT_NUMBER)
+        !    CALL FIELD_PARAMETER_SET_GET_LOCAL_DOF(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE, &
+        !      & FIELD_VALUES_SET_TYPE,dof_idx,VALUE,err,error,*999)
+        !  CASE(FIELD_ELEMENT_BASED_INTERPOLATION)
+        !    VALUE=INDEPENDENT_INTERPOLATED_POINT%VALUES(component_idx,NO_PART_DERIV)
+        !  CASE DEFAULT
+        !    LOCAL_ERROR="This independent field variable interpolation type is not supported."
+        !    CALL FlagError(LOCAL_ERROR,err,error,*999)
+        !  END SELECT
+          !PIOLA_TENSOR(component_idx,component_idx)=PIOLA_TENSOR(component_idx,component_idx)+ &
+          !  & VALUE*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))/DZDNU(component_idx,component_idx)
+          !PIOLA_TENSOR(component_idx,component_idx)=PIOLA_TENSOR(component_idx,component_idx)+ &
+          !  & VALUE*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))!*DNUDZ(component_idx,component_idx)
           !PIOLA_TENSOR(component_idx,component_idx)=PIOLA_TENSOR(component_idx,component_idx)+ &
           !  & VALUE*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
-        ENDDO
+        !ENDDO
       ENDIF
       IF(EQUATIONS_SET_SUBTYPE==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_NOLENDEP_SUBTYPE) THEN
       !add active contraction stress value (without lenght dependence) to the trace of the stress tensor - basically adding to hydrostatic pressure.
@@ -6876,6 +6902,129 @@ CONTAINS
 
     CALL MatrixProduct(DZDNU,PIOLA_TENSOR,TEMP,err,error,*999)
     CALL MatrixProduct(TEMP,DZDNUT,CAUCHY_TENSOR,err,error,*999)
+
+    IF(EQUATIONS_SET_SUBTYPE==EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE) THEN
+      ! Temporary adds active stress components to the cauchy stress tensor.
+      ! The active stress stored inside the independent field, set up by the user program is interpreted
+      ! with respect to deformed (orthogonal) material/fibre coordinates.
+      ! For further manipulations we need to transform the active stress from
+      ! the independent field to deformed spatial coordinates.
+      !
+      ! sigma(x) = q * sigma(nu_orthogonal) * q^T
+      ! with: q = dx / dnu_orthogonal
+      !       nu_orthogonal gets constructed from the deformed material coordinates
+
+      ! populate sigma(nu_orthogonal)
+      ! always end up with error if I call the function again, value comes from the case above
+      CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,err,error,*999)
+      CALL IdentityMatrix(CAUCHY_TENSOR_DEFIBRE,err,error,*999)
+      DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+        SELECT CASE(FIELD_VARIABLE%COMPONENTS(component_idx)%INTERPOLATION_TYPE)
+        CASE(FIELD_CONSTANT_INTERPOLATION)
+          VALUE=0.1_DP
+        CASE(FIELD_GAUSS_POINT_BASED_INTERPOLATION)
+          dof_idx=FIELD_VARIABLE%COMPONENTS(component_idx)%PARAM_TO_DOF_MAP%GAUSS_POINT_PARAM2DOF_MAP% &
+            & GAUSS_POINTS(GAUSS_POINT_NUMBER,ELEMENT_NUMBER)
+          CALL FIELD_PARAMETER_SET_GET_LOCAL_DOF(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE, &
+            & FIELD_VALUES_SET_TYPE,dof_idx,VALUE,err,error,*999)
+        CASE(FIELD_ELEMENT_BASED_INTERPOLATION)
+          VALUE=INDEPENDENT_INTERPOLATED_POINT%VALUES(component_idx,NO_PART_DERIV)
+        CASE DEFAULT
+          LOCAL_ERROR="This independent field variable interpolation type is not supported."
+          CALL FlagError(LOCAL_ERROR,err,error,*999)
+        END SELECT
+        CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)=VALUE
+      ENDDO
+      ! create orthogonal deformed fibre coordinate system
+      IF(ASSOCIATED(GEOMETRIC_INTERPOLATED_POINT)) THEN
+        ! reference metric
+        GEOMETRIC_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
+          & EQUATIONS%INTERPOLATION%geometricInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
+        ! deformed metric
+        DEPENDENT_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
+          & EQUATIONS%INTERPOLATION%dependentInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
+        XR=GEOMETRIC_INTERPOLATED_POINT_METRICS%DX_DXI !reference geometric directions
+        XD=DEPENDENT_INTERPOLATED_POINT_METRICS%DX_DXI !deformed geometric directions
+        ! fibre interpolation
+        FIBRE_INTERPOLATED_POINT=>EQUATIONS_SET%EQUATIONS% &
+          & INTERPOLATION%fibreInterpPoint(FIELD_U_VARIABLE_TYPE)%ptr
+        numberOfXDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_X_DIMENSIONS
+        numberOfXiDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_XI_DIMENSIONS
+        numberOfNuDimensions=SIZE(FIBRE_INTERPOLATED_POINT%VALUES,1)
+        ! call this function to get the transformation tensors between material and geometric coordinates
+        CALL Coordinates_MaterialSystemCalculate(GEOMETRIC_INTERPOLATED_POINT_METRICS,FIBRE_INTERPOLATED_POINT, &
+          & DNUDX,DXDNU, DNUDXI(1:numberOfXDimensions,1:numberOfXiDimensions), &
+          & DXIDNU(1:numberOfXiDimensions,1:numberOfXDimensions),err,error,*999)
+        ! rotate reference geometric to reference material coordinates
+        CALL MatrixProduct(DXDNU,XR,NUR,err,error,*999)
+        ! calculate the deformation gradient dz/dX
+        ! dz/dX = dz/dNu * dNu/dX
+        CALL MatrixProduct(DZDNU,DNUDX,DZDX,err,error,*999)
+        ! apply deformation gradient on reference fibre and sheet vector,
+        ! gives us the deformed fibre and sheet vector
+        CALL MatrixVectorProduct(DZDX,NUR(:,1),fibre_def,err,error,*999)
+        CALL MatrixVectorProduct(DZDX,NUR(:,2),sheet_def,err,error,*999)
+        CALL Normalise(fibre_def,fibre_def,err,error,*999)
+        CALL Normalise(sheet_def,sheet_def,err,error,*999)
+        ! calculate normal vector on the plane spanned by the fibre and sheet vector
+        CALL CrossProduct(fibre_def,sheet_def,normal_def,err,error,*999) ! orthogonal material coorindate 3
+        ! calculate orthogonal sheet vector
+        CALL CrossProduct(normal_def,fibre_def,sheet_def,err,error,*999) ! orthogonal material coorindate 2
+        CALL Normalise(normal_def,normal_def,err,error,*999)
+        NUDO(1:numberOfXDimensions,1)=fibre_def
+        NUDO(1:numberOfXDimensions,2)=-sheet_def
+        NUDO(1:numberOfXDimensions,3)=normal_def
+
+        ! construct the tensor to transform from geometric to orthogonal material coordinates
+        ! we have dnuo/dxi and dz/dxi
+        ! q = dz/dnuo = dz/dxi * dxi/dnuo
+        CALL Invert(NUDO,NUDO_INV,DET_NUDO,err,error,*999)
+        CALL MatrixProduct(XD(1:numberOfXDimensions,1:numberOfXiDimensions), &
+          & NUDO_INV(1:numberOfXDimensions,1:numberOfXiDimensions), &
+          & DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+        ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
+        ! sigma(x) = q * sigma(nuo) * q^T
+        CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
+        CALL Normalise(DZDNUO,DZDNUO,err,error,*999)
+        CALL Normalise(DZDNUOT,DZDNUOT,err,error,*999)
+        CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
+          & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
+          & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+        CALL MatrixProduct(DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions), &
+          & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions), &
+          & CAUCHY_TENSOR_DEFGEO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+
+        ! Add active stress
+        ! Hunter-McCulloch-ter Keurs constitutive model
+        ! T_a = T_Ca * [1 + beta * (lambda - 1)]
+        ! our CAUCHY_TENSOR_DEFGEO equals to T_Ca
+        ! lamda(stretch) wrt reference coordinates:
+        ! lamda = sqrt(C) ... C: right Cauchy-Green strain
+        ! lamda(stretch) wrt deformed coordinates:
+        ! lambda = sqrt(1/(1-2e))
+        !     with:   e(x) = 1/2 * (g - c(x))
+        !             c(x) = F^-T * F^-1
+        ! hence we can express lambda wrt to deformed coordinates
+        ! calculate Cauchy deformation tensor, using the expression
+        ! F^-T * F^-1 = (F * F^T)^-1
+        CALL MatrixProduct(DZDNU,DZDNUT,AZL_INV,err,error,*999)
+        CALL Invert(AZL_INV,CDT,DET_CDT,err,error,*999)
+        ! calculate Euler-Almansi strain
+        ! e(x) = 1/2 * (g - c(x))
+        EA=0.5_DP*(DEPENDENT_INTERPOLATED_POINT_METRICS%GU-CDT)
+        ! lambda = sqrt(1/(1-2e(x)))
+        lambda(1)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(1,1)-2*EA(1,1)))
+        lambda(2)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(2,2)-2*EA(2,2)))
+        lambda(3)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(3,3)-2*EA(3,3)))
+        ! add active stress components
+        DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+          DO j=1, FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+            CAUCHY_TENSOR(component_idx,j)=CAUCHY_TENSOR(component_idx,j)+ &
+              & CAUCHY_TENSOR_DEFGEO(component_idx,j)*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
+          ENDDO
+        ENDDO
+      ENDIF
+    ENDIF
 
     CAUCHY_TENSOR=CAUCHY_TENSOR/Jznu
     IF(DIAGNOSTICS1) THEN
