@@ -1437,8 +1437,9 @@ CONTAINS
     INTEGER(INTG) :: var2 ! Variable number corresponding to 'DELUDLEN' in single physics case
     INTEGER(INTG), POINTER :: EQUATIONS_SET_FIELD_DATA(:)
     REAL(DP) :: DZDNU(3,3),DZDNUT(3,3),dzdx(3,3),AZL(3,3),AZU(3,3),Fe(3,3),FeT(3,3),Fg(3,3),C(3,3),f(3,3),E(3,3),I3,P, &
-      & piolaTensor(3,3),TEMP(3,3),prevdzdx(3,3),prevdZdNu(3,3),invPrevdZdNu(3,3)
-    REAL(DP) :: cauchyTensor(3,3),JGW_CAUCHY_TENSOR(3,3),kirchoffTensor(3,3),STRESS_TENSOR(6),growthValues(3)
+      & piolaTensor(3,3),TEMP(3,3),prevdzdx(3,3),prevdZdNu(3,3),invPrevdZdNu(3,3), DNUODNU(3,3)
+    REAL(DP) :: cauchyTensor(3,3),JGW_CAUCHY_TENSOR(3,3),kirchoffTensor(3,3),STRESS_TENSOR(6),growthValues(3), &
+      & cauchyTensorFbr(3,3)
     REAL(DP) :: deformationGradientTensor(3,3),growthTensor(3,3),growthTensorInverse(3,3),growthTensorInverseTranspose(3,3), &
       & fibreGrowth,sheetGrowth,normalGrowth,fibreVector(3),sheetVector(3),normalVector(3)
     REAL(DP) :: dNudXi(3,3),dXidNu(3,3)
@@ -1908,7 +1909,8 @@ CONTAINS
             !Calculate Sigma=1/Jznu.FTF', the Cauchy stress tensor at the gauss point
             CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(EQUATIONS_SET,DEPENDENT_INTERPOLATED_POINT, &
               & MATERIALS_INTERPOLATED_POINT,GEOMETRIC_INTERPOLATED_POINT,DARCY_DEPENDENT_INTERPOLATED_POINT, &
-              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,Jznu,DZDNU,elementNumber,gauss_idx,err,error,*999)
+              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,cauchyTensorFbr,Jznu,DZDNU,DZDX,DNUODNU, &
+              & elementNumber,gauss_idx,err,error,*999)
 
             IF(DIAGNOSTICS1) THEN
               CALL WriteString(DIAGNOSTIC_OUTPUT_TYPE,"",err,error,*999)
@@ -3232,7 +3234,8 @@ CONTAINS
             !Calculate Sigma=1/Jznu.FTF', the Cauchy stress tensor at the gauss point
             CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(EQUATIONS_SET,DEPENDENT_INTERPOLATED_POINT, &
               & MATERIALS_INTERPOLATED_POINT,GEOMETRIC_INTERPOLATED_POINT,DARCY_DEPENDENT_INTERPOLATED_POINT, &
-              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,Jznu,DZDNU,elementNumber,gauss_idx,err,error,*999)
+              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,cauchyTensorFbr,Jznu,DZDNU,DZDX,DNUODNU, &
+              & elementNumber,gauss_idx,err,error,*999)
 
             !Calculate dPhi/dZ at the gauss point, Phi is the basis function
             CALL FINITE_ELASTICITY_GAUSS_DFDZ(DEPENDENT_INTERPOLATED_POINT,elementNumber,gauss_idx,numberOfDimensions, &
@@ -3343,7 +3346,8 @@ CONTAINS
             !Calculate Cauchy stress tensor at the gauss point
             CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(EQUATIONS_SET,DEPENDENT_INTERPOLATED_POINT, &
               & MATERIALS_INTERPOLATED_POINT,GEOMETRIC_INTERPOLATED_POINT,DARCY_DEPENDENT_INTERPOLATED_POINT, &
-              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,Jznu,DZDNU,elementNumber,gauss_idx,err,error,*999)
+              & INDEPENDENT_INTERPOLATED_POINT,cauchyTensor,cauchyTensorFbr,Jznu,DZDNU,DZDX,DNUODNU, &
+              & elementNumber,gauss_idx,err,error,*999)
 
             !Calculate dF/DZ at the gauss point
             CALL FINITE_ELASTICITY_GAUSS_DFDZ(DEPENDENT_INTERPOLATED_POINT,elementNumber,gauss_idx,numberOfDimensions, &
@@ -4229,8 +4233,8 @@ CONTAINS
     TYPE(VARYING_STRING), INTENT(OUT) :: error !<The error string.
     ! Local variables
     INTEGER(INTG) :: fieldInterpolation,i,nh,mh
-    REAL(DP) :: b(3,3),C(3,3),dZdNu(3,3),Fe(3,3),Fg(3,3),Je,Jg,Jznu
-    REAL(DP) :: E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6)
+    REAL(DP) :: b(3,3),C(3,3),dZdNu(3,3),Fe(3,3),Fg(3,3),Je,Jg,Jznu,dZdX(3,3),dNuodNu(3,3)
+    REAL(DP) :: E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6),cauchyStressTensorFbr(3,3)
     TYPE(FIELD_INTERPOLATED_POINT_TYPE), POINTER :: darcyInterpolatedPoint
     TYPE(VARYING_STRING) :: localError
 
@@ -4266,7 +4270,10 @@ CONTAINS
       ENDDO !i
     ENDIF
 
-    IF(evaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR) THEN
+    IF(evaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR .OR. &
+      & evaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE .OR. &
+      & evaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL .OR. &
+      & evaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE) THEN
 !!\TODO the whole stress thing needs to be looked at as the routines below do not take in the deformation gradient that
 !! is calculated above but rather they calculate it internally. This will lead to mismatches as things like growth are
 !! not taken into account.
@@ -4292,10 +4299,11 @@ CONTAINS
             cauchyStressTensor(mh,nh)=cauchyStressVoigt(TENSOR_TO_VOIGT(mh,nh,numberOfDimensions))
           ENDDO
         ENDDO
-      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE)
+      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE, &
+        & EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE)
         CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(equationsSet,dependentInterpolatedPoint,materialsInterpolatedPoint, &
           & geometricInterpolatedPoint,darcyInterpolatedPoint,independentInterpolatedPoint, &
-          & cauchyStressTensor,Jznu,dZdNu,elementNumber,0,ERR,ERROR,*999)
+          & cauchyStressTensor,cauchyStressTensorFbr,Jznu,dZdNu,dZdX,dNuodNu,elementNumber,0,ERR,ERROR,*999)
       CASE DEFAULT
         CALL FlagError("Not implemented ",err,error,*999)
       END SELECT
@@ -4304,6 +4312,10 @@ CONTAINS
     SELECT CASE(evaluateType)
     CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=Fe(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL)
+      values(1:numberOfDimensions,1:numberOfDimensions)=dZdX(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE)
+      values(1:numberOfDimensions,1:numberOfDimensions)=dNuodNu(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_R_CAUCHY_GREEN_DEFORMATION_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=C(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_L_CAUCHY_GREEN_DEFORMATION_TENSOR)
@@ -4312,6 +4324,8 @@ CONTAINS
       values(1:numberOfDimensions,1:numberOfDimensions)=E(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=cauchyStressTensor(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE)
+      values(1:numberOfDimensions,1:numberOfDimensions)=cauchyStressTensorFbr(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_SECOND_PK_STRESS_TENSOR)
       CALL FlagError("Not implemented.",err,error,*999)
     CASE DEFAULT
@@ -4346,7 +4360,8 @@ CONTAINS
     INTEGER(INTG) :: dependentVarType,meshComponentNumber
     INTEGER(INTG) :: numberOfDimensions,numberOfXi
     INTEGER(INTG) :: localElementNumber,i,nh,mh
-    REAL(DP) :: C(3,3),dZdNu(3,3),E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6),Fe(3,3),Fg(3,3),growthValues(3),Je,Jg,Jznu
+    REAL(DP) :: C(3,3),dZdNu(3,3),E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6),Fe(3,3),Fg(3,3),growthValues(3),Je,Jg,Jznu, &
+      & cauchyStressTensorFbr(3,3),dZdX(3,3),dNuodNu(3,3)
     LOGICAL :: userElementExists,ghostElement
     TYPE(BASIS_TYPE), POINTER :: elementBasis
     TYPE(COORDINATE_SYSTEM_TYPE), POINTER :: coordinateSystem
@@ -4497,7 +4512,10 @@ CONTAINS
       ENDDO !i
     ENDIF
 
-    IF(tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR) THEN
+    IF(tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE) THEN
       !Get the interpolation parameters for this element
       CALL Field_InterpolationParametersElementGet(FIELD_VALUES_SET_TYPE,localElementNumber, &
         & equations%interpolation%materialsInterpParameters(FIELD_U_VARIABLE_TYPE)%ptr,err,error,*999)
@@ -4543,10 +4561,11 @@ CONTAINS
             cauchyStressTensor(mh,nh)=cauchyStressVoigt(TENSOR_TO_VOIGT3(mh,nh))
           ENDDO
         ENDDO
-      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE)
+      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE, &
+        & EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE)
         CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(equationsSet,dependentInterpolatedPoint,materialsInterpolatedPoint, &
           & geometricInterpolatedPoint,darcyInterpolatedPoint,independentInterpolatedPoint, &
-          & cauchyStressTensor,Jznu,dZdNu,localElementNumber,0,ERR,ERROR,*999)
+          & cauchyStressTensor,cauchyStressTensorFbr,Jznu,dZdNu,dZdX,dNuodNu,localElementNumber,0,ERR,ERROR,*999)
       CASE DEFAULT
         CALL FlagError("Not implemented ",err,error,*999)
       END SELECT
@@ -4555,12 +4574,18 @@ CONTAINS
     SELECT CASE(tensorEvaluateType)
     CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=dZdNu(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL)
+      values(1:numberOfDimensions,1:numberOfDimensions)=dZdX(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE)
+      values(1:numberOfDimensions,1:numberOfDimensions)=dNuodNu(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_R_CAUCHY_GREEN_DEFORMATION_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=C(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_GREEN_LAGRANGE_STRAIN_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=E(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR)
       values(1:numberOfDimensions,1:numberOfDimensions)=cauchyStressTensor(1:numberOfDimensions,1:numberOfDimensions)
+    CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE)
+      values(1:numberOfDimensions,1:numberOfDimensions)=cauchyStressTensorFbr(1:numberOfDimensions,1:numberOfDimensions)
     CASE(EQUATIONS_SET_SECOND_PK_STRESS_TENSOR)
       CALL FlagError("Not implemented.",err,error,*999)
     CASE DEFAULT
@@ -4609,7 +4634,8 @@ CONTAINS
     INTEGER(INTG) :: dependentVarType,meshComponentNumber
     INTEGER(INTG) :: numberOfDimensions,numberOfXi
     INTEGER(INTG) :: localElementNumber,i,nh,mh
-    REAL(DP) :: dZdNu(3,3),dZdNuT(3,3),dZdXi(3,3),AZL(3,3),E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6),Jznu
+    REAL(DP) :: dZdNu(3,3),dZdNuT(3,3),dZdXi(3,3),AZL(3,3),E(3,3),cauchyStressTensor(3,3),cauchyStressVoigt(6),Jznu, &
+      & cauchyStressTensorFbr(3,3),dZdX(3,3),dNuodNu(3,3)
 
     ENTERS("FiniteElasticity_TensorInterpolateXi",err,error,*999)
 
@@ -4713,7 +4739,10 @@ CONTAINS
       END DO
     END IF
 
-    IF(tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR) THEN
+    IF(tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL .OR. &
+      & tensorEvaluateType==EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE) THEN
       !Get the interpolation parameters for this element
       CALL FIELD_INTERPOLATION_PARAMETERS_ELEMENT_GET(FIELD_VALUES_SET_TYPE,localElementNumber, &
         & equations%interpolation%materialsInterpParameters(FIELD_U_VARIABLE_TYPE)%ptr,err,error,*999)
@@ -4755,10 +4784,11 @@ CONTAINS
             cauchyStressTensor(mh,nh)=cauchyStressVoigt(TENSOR_TO_VOIGT3(mh,nh))
           ENDDO
         ENDDO
-      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE)
+      CASE(EQUATIONS_SET_ORTHOTROPIC_MATERIAL_COSTA_SUBTYPE, EQUATIONS_SET_TRANSVERSE_ISOTROPIC_GUCCIONE_SUBTYPE, &
+        & EQUATIONS_SET_GUCCIONE_ACTIVECONTRACTION_SUBTYPE)
         CALL FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(equationsSet,dependentInterpolatedPoint,materialsInterpolatedPoint, &
           & geometricInterpolatedPoint,darcyInterpolatedPoint,independentInterpolatedPoint, &
-          & cauchyStressTensor,Jznu,dZdNu,localElementNumber,0,ERR,ERROR,*999)
+          & cauchyStressTensor,cauchyStressTensorFbr,Jznu,dZdNu,dZdX,dNuodNu,localElementNumber,0,ERR,ERROR,*999)
       CASE DEFAULT
         CALL FlagError("Not implemented ",err,error,*999)
       END SELECT
@@ -4767,12 +4797,18 @@ CONTAINS
     SELECT CASE(tensorEvaluateType)
     CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR)
       values=dZdNu
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL)
+      values=dZdX
+    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE)
+      values=dNuodNu
     CASE(EQUATIONS_SET_R_CAUCHY_GREEN_DEFORMATION_TENSOR)
       values=AZL
     CASE(EQUATIONS_SET_GREEN_LAGRANGE_STRAIN_TENSOR)
       values=E
     CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR)
       values=cauchyStressTensor
+    CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE)
+      values=cauchyStressTensorFbr
     CASE(EQUATIONS_SET_SECOND_PK_STRESS_TENSOR)
       CALL FlagError("Not implemented.",err,error,*999)
     CASE DEFAULT
@@ -5231,7 +5267,8 @@ CONTAINS
   !>Evaluates the Cauchy stress tensor at a given Gauss point
   SUBROUTINE FINITE_ELASTICITY_GAUSS_CAUCHY_TENSOR(EQUATIONS_SET,DEPENDENT_INTERPOLATED_POINT, &
       & MATERIALS_INTERPOLATED_POINT,GEOMETRIC_INTERPOLATED_POINT,DARCY_DEPENDENT_INTERPOLATED_POINT, &
-      & INDEPENDENT_INTERPOLATED_POINT,CAUCHY_TENSOR,Jznu,DZDNU,ELEMENT_NUMBER,GAUSS_POINT_NUMBER,err,error,*)
+      & INDEPENDENT_INTERPOLATED_POINT,CAUCHY_TENSOR,CAUCHY_TENSOR_FBR,Jznu,DZDNU,DZDX,DNUODNU, &
+      & ELEMENT_NUMBER,GAUSS_POINT_NUMBER,err,error,*)
 
     !Argument variables
     TYPE(EQUATIONS_SET_TYPE), POINTER, INTENT(IN) :: EQUATIONS_SET !<A pointer to the equations set
@@ -5245,6 +5282,9 @@ CONTAINS
     INTEGER(INTG), INTENT(IN) :: ELEMENT_NUMBER,GAUSS_POINT_NUMBER !<Element/Gauss point number
     INTEGER(INTG), INTENT(OUT) :: ERR !<The error code
     TYPE(VARYING_STRING), INTENT(OUT) :: ERROR !<The error string
+    REAL(DP), INTENT(OUT) :: CAUCHY_TENSOR_FBR(:,:) ! cauchy stress wrt orthogongal deformed fibre coordinates
+    REAL(DP), INTENT(OUT) :: DZDX(:,:) !Deformation gradient tensor mapping spatial coordinates
+    REAL(DP), INTENT(OUT) :: DNUODNU(:,:) !Deformation gradient tensor mapping fibre coordinates
     !Local Variables
     INTEGER(INTG) :: EQUATIONS_SET_SUBTYPE !<The equation subtype
     INTEGER(INTG) :: i,j,k,PRESSURE_COMPONENT,component_idx,dof_idx
@@ -5263,13 +5303,14 @@ CONTAINS
     REAL(DP) :: DNUDXI(3,3) ! tensor to transform from the material system to the xi coordinate system
     REAL(DP) :: DXIDNU(3,3) ! tensor to transform from the xi coordinate system to the material coordinate system
     REAL(DP) :: DNUDZ(3,3) !Inverse of the deformation gradient DZDNU
-    REAL(DP) :: DET_NUD, DET_NUDO ! determinant of deformed material coordinates, transformation tensor
+    REAL(DP) :: DET_NUD, DET_NUDO, DET_DZDNUO, DET_DZDNUOT ! determinant of deformed material coordinates, transformation tensors
     REAL(DP) :: NUDO_INV(3,3) ! inverse of the orthogonal deformed material coordinates
-    REAL(DP) :: TEMP_ROT(3,3) ! just some temporary storage
-    REAL(DP) :: DZDNUO(3,3) ! tensor to transform from orthogonal deformed material coordinates to geometric coordinates
-    REAL(DP) :: DZDNUOT(3,3) ! transpose of DZDNUO
+    REAL(DP) :: TEMP_ROT(3,3), TEMP_ROT2(3,3) ! just some temporary storage
+    REAL(DP) :: DZDNUO(3,3) ! tensor to transform from orthogonal fibre to spatial coordinates
+    REAL(DP) :: DNUODZ(3,3) ! tensor to transform from spatial to orthogonal fibre coordinates
+    REAL(DP) :: DZDNUOT(3,3), DNUODZT(3,3) ! transpose of DZDNUO, DNUODZT
     REAL(DP) :: fibre_def(3), sheet_def(3), normal_def(3) ! deformed material coordinate vectors
-    REAL(DP) :: DZDX(3,3) ! deformation gradient mapping the geometric coordinates
+    !REAL(DP) :: DZDX(3,3) ! deformation gradient mapping the geometric coordinates
     REAL(DP) :: EA(3,3)! euler almansi strain tensor
     REAL(DP) :: CDT(3,3), DET_CDT ! the cauchy deformation tensor
     REAL(DP) :: AZL_INV(3,3) ! (F'*F)^-1
@@ -7027,6 +7068,23 @@ CONTAINS
     ENDIF
 
     CAUCHY_TENSOR=CAUCHY_TENSOR/Jznu
+    ! rotate the cauchy stress wrt spatial coordinates to be wrt deformed orthogonal fibres
+    ! for exporting and evaluating the stress in fibre direction
+    ! sigma(x) = q * sigma(nuo) * q^T
+    ! sigma(nuo) = q^-1 * sigma(x) * q^-T
+    CALL Invert(DZDNUO,DNUODZ,DET_DZDNUO,err,error,*999)
+    CALL Invert(DZDNUOT,DNUODZT,DET_DZDNUOT,err,error,*999)
+    CALL MatrixProduct(CAUCHY_TENSOR(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & DNUODZT(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & TEMP_ROT2(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+    CALL MatrixProduct(DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & TEMP_ROT2(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & CAUCHY_TENSOR_FBR(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+    ! get the deformation gradient which maps reference and deformed orthogonal fibre coordinates
+    ! dnuo/dnu = dz/dnu * dnuo/dz
+    CALL MatrixProduct(DZDNU(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions), &
+      & DNUODNU(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
     IF(DIAGNOSTICS1) THEN
       CALL WRITE_STRING_VALUE(DIAGNOSTIC_OUTPUT_TYPE,"  ELEMENT_NUMBER = ",ELEMENT_NUMBER,err,error,*999)
       CALL WRITE_STRING_VALUE(DIAGNOSTIC_OUTPUT_TYPE,"  gauss_idx = ",GAUSS_POINT_NUMBER,err,error,*999)
@@ -10872,6 +10930,18 @@ CONTAINS
                       CALL FIELD_VARIABLE_LABEL_SET(EQUATIONS_SET%derived%derivedField,variableType,"Strain",err,error,*999)
                       CALL FIELD_NUMBER_OF_COMPONENTS_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
                         & numberOfTensorComponents,err,error,*999)
+                    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_SPATIAL)
+                      CALL FIELD_DIMENSION_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                        & FIELD_VECTOR_DIMENSION_TYPE,err,error,*999)
+                      CALL FIELD_VARIABLE_LABEL_SET(EQUATIONS_SET%derived%derivedField,variableType,"Strain",err,error,*999)
+                      CALL FIELD_NUMBER_OF_COMPONENTS_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                        & numberOfTensorComponents,err,error,*999)
+                    CASE(EQUATIONS_SET_DEFORMATION_GRADIENT_TENSOR_FIBRE)
+                      CALL FIELD_DIMENSION_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                        & FIELD_VECTOR_DIMENSION_TYPE,err,error,*999)
+                      CALL FIELD_VARIABLE_LABEL_SET(EQUATIONS_SET%derived%derivedField,variableType,"Strain",err,error,*999)
+                      CALL FIELD_NUMBER_OF_COMPONENTS_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                        & numberOfTensorComponents,err,error,*999)
                     CASE(EQUATIONS_SET_R_CAUCHY_GREEN_DEFORMATION_TENSOR)
                       CALL FIELD_DIMENSION_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
                         & FIELD_VECTOR_DIMENSION_TYPE,err,error,*999)
@@ -10896,6 +10966,12 @@ CONTAINS
                       CALL FIELD_VARIABLE_LABEL_SET(EQUATIONS_SET%derived%derivedField,variableType,"Stress",err,error,*999)
                       CALL FIELD_NUMBER_OF_COMPONENTS_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
                         & numberOfTensorComponents,err,error,*999)
+                    CASE(EQUATIONS_SET_CAUCHY_STRESS_TENSOR_FIBRE)
+                      CALL FIELD_DIMENSION_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                        & FIELD_VECTOR_DIMENSION_TYPE,err,error,*999)
+                      CALL FIELD_VARIABLE_LABEL_SET(EQUATIONS_SET%derived%derivedField,variableType,"Stress",err,error,*999)
+                      CALL FIELD_NUMBER_OF_COMPONENTS_SET_AND_LOCK(EQUATIONS_SET%derived%derivedField,variableType, &
+                          & numberOfTensorComponents,err,error,*999)
                     CASE(EQUATIONS_SET_FIRST_PK_STRESS_TENSOR)
                       CALL FlagError("Not implemented.",err,error,*999)
                     CASE(EQUATIONS_SET_SECOND_PK_STRESS_TENSOR)
