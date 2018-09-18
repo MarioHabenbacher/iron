@@ -7026,8 +7026,8 @@ CONTAINS
         ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
         ! sigma(x) = q * sigma(nuo) * q^T
         CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
-        CALL Normalise(DZDNUO,DZDNUO,err,error,*999)
-        CALL Normalise(DZDNUOT,DZDNUOT,err,error,*999)
+        !CALL Normalise(DZDNUO,DZDNUO,err,error,*999)
+        !CALL Normalise(DZDNUOT,DZDNUOT,err,error,*999)
         CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
           & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
           & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
