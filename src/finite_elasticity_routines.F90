@@ -6996,8 +6996,22 @@ CONTAINS
         CALL Coordinates_MaterialSystemCalculate(GEOMETRIC_INTERPOLATED_POINT_METRICS,FIBRE_INTERPOLATED_POINT, &
           & DNUDX,DXDNU, DNUDXI(1:numberOfXDimensions,1:numberOfXiDimensions), &
           & DXIDNU(1:numberOfXiDimensions,1:numberOfXDimensions),err,error,*999)
+        ! normalise reference and deformed spatial vectors
+        DO component_idx=1,numberOfXDimensions
+          CALL Normalise(XR(1:numberOfXDimensions,component_idx), &
+            & XR(1:numberOfXDimensions,component_idx),err,error,*999)
+          CALL Normalise(XD(1:numberOfXDimensions,component_idx), &
+            & XD(1:numberOfXDimensions,component_idx),err,error,*999)
+        ENDDO
         ! rotate reference geometric to reference material coordinates
+        CALL Normalise(DXDNU,DXDNU,err,error,*999)
+        CALL Normalise(DNUDX,DNUDX,err,error,*999)
         CALL MatrixProduct(DXDNU,XR,NUR,err,error,*999)
+        ! normalise the refernce material vectors
+        DO component_idx=1,numberOfXDimensions
+          CALL Normalise(NUR(1:numberOfXDimensions,component_idx), &
+            & NUR(1:numberOfXDimensions,component_idx),err,error,*999)
+        ENDDO
         ! calculate the deformation gradient dz/dX
         ! dz/dX = dz/dNu * dNu/dX
         CALL MatrixProduct(DZDNU,DNUDX,DZDX,err,error,*999)
@@ -7005,16 +7019,18 @@ CONTAINS
         ! gives us the deformed fibre and sheet vector
         CALL MatrixVectorProduct(DZDX,NUR(:,1),fibre_def,err,error,*999)
         CALL MatrixVectorProduct(DZDX,NUR(:,2),sheet_def,err,error,*999)
-        CALL Normalise(fibre_def,fibre_def,err,error,*999)
-        CALL Normalise(sheet_def,sheet_def,err,error,*999)
         ! calculate normal vector on the plane spanned by the fibre and sheet vector
         CALL CrossProduct(fibre_def,sheet_def,normal_def,err,error,*999) ! orthogonal material coorindate 3
         ! calculate orthogonal sheet vector
         CALL CrossProduct(normal_def,fibre_def,sheet_def,err,error,*999) ! orthogonal material coorindate 2
-        CALL Normalise(normal_def,normal_def,err,error,*999)
         NUDO(1:numberOfXDimensions,1)=fibre_def
         NUDO(1:numberOfXDimensions,2)=-sheet_def
         NUDO(1:numberOfXDimensions,3)=normal_def
+        ! normalise the deformed orthogonal material vectors
+        DO component_idx=1,numberOfXDimensions
+          CALL Normalise(NUDO(1:numberOfXDimensions,component_idx), &
+            & NUDO(1:numberOfXDimensions,component_idx),err,error,*999)
+        ENDDO
 
         ! construct the tensor to transform from geometric to orthogonal material coordinates
         ! we have dnuo/dxi and dz/dxi
@@ -7026,8 +7042,6 @@ CONTAINS
         ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
         ! sigma(x) = q * sigma(nuo) * q^T
         CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
-        !CALL Normalise(DZDNUO,DZDNUO,err,error,*999)
-        !CALL Normalise(DZDNUOT,DZDNUOT,err,error,*999)
         CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
           & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
           & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
