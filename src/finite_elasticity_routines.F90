@@ -5298,6 +5298,8 @@ CONTAINS
     REAL(DP) :: XR(3,3), XD(3,3) ! geometrical coordinates with respect to xi
     REAL(DP) :: NUR(3,3), NUD(3,3), NUDO(3,3) ! material coordinates with respect to xi
     INTEGER(INTG) :: numberOfXDimensions, numberOfXiDimensions, numberOfNuDimensions ! dimensions of coordinate systems
+    REAL(DP) :: DZDXT(3,3) ! transpose of DZDX
+    REAL(DP) :: DXDZ(3,3), DET_DZDX ! Inverse and determinant of DZDX
     REAL(DP) :: DXDNU(3,3) ! tensor to transform from the geometric coordinate system to the material coordinate system
     REAL(DP) :: DNUDX(3,3) ! tensor to transform from the material system to the geometric coordinate system
     REAL(DP) :: DNUDXI(3,3) ! tensor to transform from the material system to the xi coordinate system
@@ -5310,8 +5312,7 @@ CONTAINS
     REAL(DP) :: DNUODZ(3,3) ! tensor to transform from spatial to orthogonal fibre coordinates
     REAL(DP) :: DZDNUOT(3,3), DNUODZT(3,3) ! transpose of DZDNUO, DNUODZT
     REAL(DP) :: fibre_def(3), sheet_def(3), normal_def(3) ! deformed material coordinate vectors
-    !REAL(DP) :: DZDX(3,3) ! deformation gradient mapping the geometric coordinates
-    REAL(DP) :: EA(3,3)! euler almansi strain tensor
+    REAL(DP) :: EA(3,3), EA_TEMP(3,3), EA_FBR(3,3) ! euler almansi strain tensor wrt deformed spatial and material
     REAL(DP) :: CDT(3,3), DET_CDT ! the cauchy deformation tensor
     REAL(DP) :: AZL_INV(3,3) ! (F'*F)^-1
     REAL(DP) :: I1,I2,I3            !Invariants, if needed
@@ -6956,7 +6957,6 @@ CONTAINS
       !       nu_orthogonal gets constructed from the deformed material coordinates
 
       ! populate sigma(nu_orthogonal)
-      ! always end up with error if I call the function again, value comes from the case above
       CALL Field_VariableGet(EQUATIONS_SET%INDEPENDENT%INDEPENDENT_FIELD,FIELD_U_VARIABLE_TYPE,FIELD_VARIABLE,err,error,*999)
       CALL IdentityMatrix(CAUCHY_TENSOR_DEFIBRE,err,error,*999)
       DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
@@ -6977,108 +6977,124 @@ CONTAINS
         CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)=VALUE
       ENDDO
       ! create orthogonal deformed fibre coordinate system
-      IF(ASSOCIATED(GEOMETRIC_INTERPOLATED_POINT)) THEN
-        ! reference metric
-        GEOMETRIC_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
-          & EQUATIONS%INTERPOLATION%geometricInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
-        ! deformed metric
-        DEPENDENT_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
-          & EQUATIONS%INTERPOLATION%dependentInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
-        XR=GEOMETRIC_INTERPOLATED_POINT_METRICS%DX_DXI !reference geometric directions
-        XD=DEPENDENT_INTERPOLATED_POINT_METRICS%DX_DXI !deformed geometric directions
-        ! fibre interpolation
-        FIBRE_INTERPOLATED_POINT=>EQUATIONS_SET%EQUATIONS% &
-          & INTERPOLATION%fibreInterpPoint(FIELD_U_VARIABLE_TYPE)%ptr
-        numberOfXDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_X_DIMENSIONS
-        numberOfXiDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_XI_DIMENSIONS
-        numberOfNuDimensions=SIZE(FIBRE_INTERPOLATED_POINT%VALUES,1)
-        ! call this function to get the transformation tensors between material and geometric coordinates
-        CALL Coordinates_MaterialSystemCalculate(GEOMETRIC_INTERPOLATED_POINT_METRICS,FIBRE_INTERPOLATED_POINT, &
-          & DNUDX,DXDNU, DNUDXI(1:numberOfXDimensions,1:numberOfXiDimensions), &
-          & DXIDNU(1:numberOfXiDimensions,1:numberOfXDimensions),err,error,*999)
+      ! reference metric
+      GEOMETRIC_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
+        & EQUATIONS%INTERPOLATION%geometricInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
+      ! deformed metric
+      DEPENDENT_INTERPOLATED_POINT_METRICS=>EQUATIONS_SET% &
+        & EQUATIONS%INTERPOLATION%dependentInterpPointMetrics(FIELD_U_VARIABLE_TYPE)%ptr
+      XR=GEOMETRIC_INTERPOLATED_POINT_METRICS%DX_DXI !reference spatial directions
+      XD=DEPENDENT_INTERPOLATED_POINT_METRICS%DX_DXI !deformed spatial directions
+      ! fibre interpolation
+      FIBRE_INTERPOLATED_POINT=>EQUATIONS_SET%EQUATIONS% &
+        & INTERPOLATION%fibreInterpPoint(FIELD_U_VARIABLE_TYPE)%ptr
+      numberOfXDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_X_DIMENSIONS
+      numberOfXiDimensions=GEOMETRIC_INTERPOLATED_POINT_METRICS%NUMBER_OF_XI_DIMENSIONS
+      numberOfNuDimensions=SIZE(FIBRE_INTERPOLATED_POINT%VALUES,1)
+      ! call this function to get the transformation tensors between material and spatial coordinates
+      CALL Coordinates_MaterialSystemCalculate(GEOMETRIC_INTERPOLATED_POINT_METRICS,FIBRE_INTERPOLATED_POINT, &
+        & DNUDX,DXDNU,DNUDXI(1:numberOfXDimensions,1:numberOfXiDimensions), &
+        & DXIDNU(1:numberOfXiDimensions,1:numberOfXDimensions),err,error,*999)
+      DO component_idx=1,numberOfXDimensions
         ! normalise reference and deformed spatial vectors
-        DO component_idx=1,numberOfXDimensions
-          CALL Normalise(XR(1:numberOfXDimensions,component_idx), &
-            & XR(1:numberOfXDimensions,component_idx),err,error,*999)
-          CALL Normalise(XD(1:numberOfXDimensions,component_idx), &
-            & XD(1:numberOfXDimensions,component_idx),err,error,*999)
-        ENDDO
-        ! rotate reference geometric to reference material coordinates
-        CALL Normalise(DXDNU,DXDNU,err,error,*999)
-        CALL Normalise(DNUDX,DNUDX,err,error,*999)
-        CALL MatrixProduct(DXDNU,XR,NUR,err,error,*999)
+        CALL Normalise(XR(1:numberOfXDimensions,component_idx), &
+          & XR(1:numberOfXDimensions,component_idx),err,error,*999)
+        CALL Normalise(XD(1:numberOfXDimensions,component_idx), &
+          & XD(1:numberOfXDimensions,component_idx),err,error,*999)
+        ! rotate reference spatial to reference material coordinates
+        CALL MatrixVectorProduct(DXDNU,XR(1:numberOfXDimensions,component_idx), &
+          & NUR(1:numberOfXDimensions,component_idx),err,error,*999)
         ! normalise the refernce material vectors
-        DO component_idx=1,numberOfXDimensions
-          CALL Normalise(NUR(1:numberOfXDimensions,component_idx), &
-            & NUR(1:numberOfXDimensions,component_idx),err,error,*999)
-        ENDDO
-        ! calculate the deformation gradient dz/dX
-        ! dz/dX = dz/dNu * dNu/dX
-        CALL MatrixProduct(DZDNU,DNUDX,DZDX,err,error,*999)
-        ! apply deformation gradient on reference fibre and sheet vector,
-        ! gives us the deformed fibre and sheet vector
-        CALL MatrixVectorProduct(DZDX,NUR(:,1),fibre_def,err,error,*999)
-        CALL MatrixVectorProduct(DZDX,NUR(:,2),sheet_def,err,error,*999)
-        ! calculate normal vector on the plane spanned by the fibre and sheet vector
-        CALL CrossProduct(fibre_def,sheet_def,normal_def,err,error,*999) ! orthogonal material coorindate 3
-        ! calculate orthogonal sheet vector
-        CALL CrossProduct(normal_def,fibre_def,sheet_def,err,error,*999) ! orthogonal material coorindate 2
-        NUDO(1:numberOfXDimensions,1)=fibre_def
-        NUDO(1:numberOfXDimensions,2)=-sheet_def
-        NUDO(1:numberOfXDimensions,3)=normal_def
-        ! normalise the deformed orthogonal material vectors
-        DO component_idx=1,numberOfXDimensions
-          CALL Normalise(NUDO(1:numberOfXDimensions,component_idx), &
-            & NUDO(1:numberOfXDimensions,component_idx),err,error,*999)
-        ENDDO
+        CALL Normalise(NUR(1:numberOfXDimensions,component_idx), &
+          & NUR(1:numberOfXDimensions,component_idx),err,error,*999)
+      ENDDO
+      ! calculate the deformation gradient mapping the spatial coordinates
+      ! dz/dX = dz/dxi * dxi/dX
+      CALL MatrixProduct(DEPENDENT_INTERPOLATED_POINT_METRICS%DX_DXI, &
+        & GEOMETRIC_INTERPOLATED_POINT_METRICS%DXI_DX,DZDX,err,error,*999)
+      ! apply deformation gradient on reference fibre and sheet vector,
+      ! gives us the deformed fibre and sheet vector
+      CALL MatrixVectorProduct(DZDX,NUR(:,1),fibre_def,err,error,*999)
+      CALL MatrixVectorProduct(DZDX,NUR(:,2),sheet_def,err,error,*999)
+      ! calculate normal vector on the plane spanned by the fibre and sheet vector
+      CALL CrossProduct(fibre_def,sheet_def,normal_def,err,error,*999) ! orthogonal material coorindate 3
+      ! calculate orthogonal sheet vector
+      CALL CrossProduct(normal_def,fibre_def,sheet_def,err,error,*999) ! orthogonal material coorindate 2
+      NUDO(1:numberOfXDimensions,1)=fibre_def
+      NUDO(1:numberOfXDimensions,2)=-sheet_def
+      NUDO(1:numberOfXDimensions,3)=normal_def
+      ! normalise the deformed orthogonal material vectors
+      DO component_idx=1,numberOfXDimensions
+        CALL Normalise(NUDO(1:numberOfXDimensions,component_idx), &
+          & NUDO(1:numberOfXDimensions,component_idx),err,error,*999)
+      ENDDO
 
-        ! construct the tensor to transform from geometric to orthogonal material coordinates
-        ! we have dnuo/dxi and dz/dxi
-        ! q = dz/dnuo = dz/dxi * dxi/dnuo
-        CALL Invert(NUDO,NUDO_INV,DET_NUDO,err,error,*999)
-        CALL MatrixProduct(XD(1:numberOfXDimensions,1:numberOfXiDimensions), &
-          & NUDO_INV(1:numberOfXDimensions,1:numberOfXiDimensions), &
-          & DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
-        ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
-        ! sigma(x) = q * sigma(nuo) * q^T
-        CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
-        CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
-          & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
-          & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
-        CALL MatrixProduct(DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions), &
-          & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions), &
-          & CAUCHY_TENSOR_DEFGEO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+      ! construct the tensor to transform from geometric to orthogonal material coordinates
+      ! we have dnuo/dxi and dz/dxi
+      ! q = dz/dnuo = dz/dxi * dxi/dnuo
+      CALL Invert(NUDO,NUDO_INV,DET_NUDO,err,error,*999)
+      CALL MatrixProduct(XD(1:numberOfXDimensions,1:numberOfXiDimensions), &
+        & NUDO_INV(1:numberOfXDimensions,1:numberOfXiDimensions), &
+        & DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+      ! calculate q^T
+      CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
 
-        ! Add active stress
-        ! Hunter-McCulloch-ter Keurs constitutive model
-        ! T_a = T_Ca * [1 + beta * (lambda - 1)]
-        ! our CAUCHY_TENSOR_DEFGEO equals to T_Ca
-        ! lamda(stretch) wrt reference coordinates:
-        ! lamda = sqrt(C) ... C: right Cauchy-Green strain
-        ! lamda(stretch) wrt deformed coordinates:
-        ! lambda = sqrt(1/(1-2e))
-        !     with:   e(x) = 1/2 * (g - c(x))
-        !             c(x) = F^-T * F^-1
-        ! hence we can express lambda wrt to deformed coordinates
-        ! calculate Cauchy deformation tensor, using the expression
-        ! F^-T * F^-1 = (F * F^T)^-1
-        CALL MatrixProduct(DZDNU,DZDNUT,AZL_INV,err,error,*999)
-        CALL Invert(AZL_INV,CDT,DET_CDT,err,error,*999)
-        ! calculate Euler-Almansi strain
-        ! e(x) = 1/2 * (g - c(x))
-        EA=0.5_DP*(DEPENDENT_INTERPOLATED_POINT_METRICS%GU-CDT)
-        ! lambda = sqrt(1/(1-2e(x)))
-        lambda(1)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(1,1)-2*EA(1,1)))
-        lambda(2)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(2,2)-2*EA(2,2)))
-        lambda(3)=SQRT(1/(GEOMETRIC_INTERPOLATED_POINT_METRICS%GU(3,3)-2*EA(3,3)))
-        ! add active stress components
-        DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
-          DO j=1, FIELD_VARIABLE%NUMBER_OF_COMPONENTS
-            CAUCHY_TENSOR(component_idx,j)=CAUCHY_TENSOR(component_idx,j)+ &
-              & CAUCHY_TENSOR_DEFGEO(component_idx,j)*(1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
-          ENDDO
+      ! Add active stress
+      ! Hunter-McCulloch-ter Keurs constitutive model
+      ! T_a = T_Ca * [1 + beta * (lambda - 1)]
+      ! our CAUCHY_TENSOR_DEFGEO equals to T_Ca
+      ! lamda(stretch) wrt reference coordinates:
+      ! lamda = sqrt(C) ... C: right Cauchy-Green strain
+      ! lamda(stretch) wrt deformed coordinates:
+      ! lambda = sqrt(1/(1-2e))
+      !     with:   e(x) = 1/2 * (g - c(x))
+      !             c(x) = F^-T * F^-1
+      ! hence we can express lambda wrt to deformed coordinates
+      ! calculate Cauchy deformation tensor, using the expression
+      ! F^-T * F^-1 = (F * F^T)^-1
+      CALL MatrixProduct(DZDNU,DZDNUT,AZL_INV,err,error,*999)
+      CALL Invert(AZL_INV,CDT,DET_CDT,err,error,*999)
+      ! calculate Euler-Almansi strain
+      ! e(x) = 1/2 * (g - c(x))
+      EA=0.5_DP*(DEPENDENT_INTERPOLATED_POINT_METRICS%GU-CDT)
+      ! rotate Euler-Almansi strain to be with respect to deformed material coordinates
+      ! we have q(dZdNuo) but we need the inverse and inverse transpose of it
+      CALL Invert(DZDNUO,DNUODZ,DET_DZDNUO,err,error,*999)
+      CALL Invert(DZDNUOT,DNUODZT,DET_DZDNUOT,err,error,*999)
+      ! e(nuo) = q^-1 * e(x) * q^-T
+      CALL MatrixProduct(EA(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & DNUODZT(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & EA_TEMP(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+      CALL MatrixProduct(DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & EA_TEMP(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & EA_FBR(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+
+      ! lambda = sqrt(1/(1-2e(nuo)))
+      lambda(1)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(1,1)))
+      lambda(2)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(2,2)))
+      lambda(3)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(3,3)))
+      ! calculate active stress components
+      DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+        CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)=CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)* &
+          & (1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
+      ENDDO
+
+      ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
+      ! sigma(x) = q * sigma(nuo) * q^T
+      CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
+      CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+      CALL MatrixProduct(DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & CAUCHY_TENSOR_DEFGEO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+      ! add active stress components
+      DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+        DO j=1, FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+          CAUCHY_TENSOR(component_idx,j)=CAUCHY_TENSOR(component_idx,j)+ &
+            & CAUCHY_TENSOR_DEFGEO(component_idx,j)
         ENDDO
-      ENDIF
+      ENDDO
     ENDIF
 
     CAUCHY_TENSOR=CAUCHY_TENSOR/Jznu
@@ -7086,8 +7102,6 @@ CONTAINS
     ! for exporting and evaluating the stress in fibre direction
     ! sigma(x) = q * sigma(nuo) * q^T
     ! sigma(nuo) = q^-1 * sigma(x) * q^-T
-    CALL Invert(DZDNUO,DNUODZ,DET_DZDNUO,err,error,*999)
-    CALL Invert(DZDNUOT,DNUODZT,DET_DZDNUOT,err,error,*999)
     CALL MatrixProduct(CAUCHY_TENSOR(1:numberOfXDimensions,1:numberOfXDimensions), &
       & DNUODZT(1:numberOfXDimensions,1:numberOfXDimensions), &
       & TEMP_ROT2(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
