@@ -5320,7 +5320,7 @@ CONTAINS
     REAL(DP) :: DZDNUOT(3,3), DNUODZT(3,3) ! transpose of DZDNUO, DNUODZT
     REAL(DP) :: fibre_def(3), sheet_def(3), normal_def(3) ! deformed material coordinate vectors
     REAL(DP) :: EA(3,3), EA_TEMP(3,3), EA_FBR(3,3) ! euler almansi strain tensor wrt deformed spatial and material
-    REAL(DP) :: CDT(3,3), DET_CDT ! the cauchy deformation tensor
+    REAL(DP) :: CDT(3,3), DET_CDT, lambda_g(3,3) ! the cauchy deformation tensor
     REAL(DP) :: AZL_INV(3,3) ! (F'*F)^-1
     REAL(DP) :: XID(3,3), DET_DNUODZ
     REAL(DP) :: I1,I2,I3            !Invariants, if needed
@@ -7061,6 +7061,7 @@ CONTAINS
       ! calculate normal vector on the plane spanned by the fibre and sheet vector
       CALL CrossProduct(fibre_def,sheet_def,normal_def,err,error,*999) ! orthogonal material coorindate 3
       ! calculate orthogonal sheet vector
+      !CALL CrossProduct(normal_def,fibre_def,sheet_def,err,error,*999)
       CALL CrossProduct(fibre_def,normal_def,sheet_def,err,error,*999) ! orthogonal material coorindate 2
       NUDO(1:numberOfXDimensions,1)=fibre_def
       NUDO(1:numberOfXDimensions,2)=sheet_def
@@ -7073,7 +7074,7 @@ CONTAINS
 
       ! construct the tensor to transform from geometric to orthogonal material coordinates
       ! we have dnuo/dxi and dxi/dz
-      ! q = dnuo/dz = dnuo/dxi * dxi/dz
+      ! q^-1 = dnuo/dz = dnuo/dxi * dxi/dz
       XID=DEPENDENT_INTERPOLATED_POINT_METRICS%DXI_DX
       DO component_idx=1,numberOfXDimensions
         CALL Normalise(XID(1:numberOfXDimensions,component_idx), &
@@ -7082,12 +7083,14 @@ CONTAINS
       CALL MatrixProduct(NUDO(1:numberOfXDimensions,1:numberOfXiDimensions), &
         & XID(1:numberOfXDimensions,1:numberOfXiDimensions), &
         & DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
-      ! Calculate q^-1
+      ! Calculate q
       CALL Invert(DNUODZ,DZDNUO,DET_DNUODZ,err,error,*999)
-      ! Calculate q^T
-      CALL MatrixTranspose(DNUODZ,DNUODZT,err,error,*999)
       ! Calculate q^-T
+      CALL MatrixTranspose(DNUODZ,DNUODZT,err,error,*999)
+      ! Calculate q^T
       CALL MatrixTranspose(DZDNUO,DZDNUOT,err,error,*999)
+
+      !WRITE(*,*) "Determinant of DNUODZ: ", DET_DNUODZ
 
       ! Add active stress
       ! Hunter-McCulloch-ter Keurs constitutive model
@@ -7107,14 +7110,17 @@ CONTAINS
       ! calculate Euler-Almansi strain
       ! e(x) = 1/2 * (g - c(x))
       EA=0.5_DP*(DEPENDENT_INTERPOLATED_POINT_METRICS%GU-CDT)
+      !EA=0.5_DP*(1.0_DP-CDT)
       ! rotate Euler-Almansi strain to be with respect to deformed material coordinates
       ! e(nuo) = q^-1 * e(x) * q^-T
       CALL MatrixProduct(EA(1:numberOfXDimensions,1:numberOfXDimensions), &
-        & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & DNUODZT(1:numberOfXDimensions,1:numberOfXDimensions), &
         & EA_TEMP(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
-      CALL MatrixProduct(DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions), &
+      CALL MatrixProduct(DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions), &
         & EA_TEMP(1:numberOfXDimensions,1:numberOfXDimensions), &
         & EA_FBR(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+
+      !EA_FBR=EA_FBR/DET_DNUODZ
 
       IF(FIELD_VARIABLE%COMPONENTS(1)%INTERPOLATION_TYPE==FIELD_CONSTANT_INTERPOLATION) THEN
         lambda(1)=1.0_DP
@@ -7122,24 +7128,49 @@ CONTAINS
         lambda(3)=1.0_DP
       ELSE
         ! lambda = sqrt(1/(1-2e(nuo)))
-        lambda(1)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(1,1)))
-        lambda(2)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(2,2)))
-        lambda(3)=SQRT(1.0_DP/(1.0_DP-2*EA_FBR(3,3)))
+        lambda(1)=SQRT(1.0_DP/(1.0_DP-2.0_DP*EA_FBR(1,1)))
+        lambda(2)=SQRT(1.0_DP/(1.0_DP-2.0_DP*EA_FBR(2,2)))
+        lambda(3)=SQRT(1.0_DP/(1.0_DP-2.0_DP*EA_FBR(3,3)))
+
+        lambda_g=SQRT(1.0_DP/(1.0_DP-2.0_DP*EA))
       ENDIF
+
       ! calculate active stress components
-      DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
-        CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)=CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)* &
-          & (1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
-      ENDDO
+      !DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
+      !  CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)=CAUCHY_TENSOR_DEFIBRE(component_idx,component_idx)* &
+      !    & (1.0_DP+1.45_DP*(lambda(component_idx)-1.0_DP))
+      !ENDDO
 
       ! transform the Cauchy stress wrt orthogonal fibres to be wrt spatial coordinates
       ! sigma(x) = q * sigma(nuo) * q^T
       CALL MatrixProduct(CAUCHY_TENSOR_DEFIBRE(1:numberOfXDimensions,1:numberOfXDimensions), &
-        & DNUODZT(1:numberOfXDimensions,1:numberOfXDimensions), &
+        & DZDNUOT(1:numberOfXDimensions,1:numberOfXDimensions), &
         & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
-      CALL MatrixProduct(DNUODZ(1:numberOfXDimensions,1:numberOfXDimensions), &
+      CALL MatrixProduct(DZDNUO(1:numberOfXDimensions,1:numberOfXDimensions), &
         & TEMP_ROT(1:numberOfXDimensions,1:numberOfXDimensions), &
         & CAUCHY_TENSOR_DEFGEO(1:numberOfXDimensions,1:numberOfXDimensions),err,error,*999)
+
+      ! calculate active stress components
+      DO component_idx=1,numberOfXDimensions
+        DO j=1,numberOfXDimensions
+          CAUCHY_TENSOR_DEFGEO(component_idx,j)=CAUCHY_TENSOR_DEFGEO(component_idx,j)* &
+            & (1.0_DP+1.45_DP*(lambda_g(component_idx,j)-1.0_DP))
+        ENDDO
+      ENDDO
+
+      ! Check for Nan entries in CAUCHY_TENSOR_DEFGEO
+      DO component_idx=1,numberOfXDimensions
+        DO j=1,numberOfXDimensions
+          IF(CAUCHY_TENSOR_DEFGEO(component_idx,j)/=CAUCHY_TENSOR_DEFGEO(component_idx,j)) THEN
+            CAUCHY_TENSOR_DEFGEO(component_idx,j)=0.0_DP
+          ENDIF
+        ENDDO
+      ENDDO
+
+      !WRITE(*,*) 'CAUCHY_TENSOR_DEFIBRE: ', CAUCHY_TENSOR_DEFGEO
+      !WRITE(*,*) 'CAUCHY_TENSOR_DEFGEO: ', CAUCHY_TENSOR_DEFGEO
+      !CAUCHY_TENSOR_DEFGEO=CAUCHY_TENSOR_DEFGEO/DET_DNUODZ
+
       ! add active stress components
       DO component_idx=1,FIELD_VARIABLE%NUMBER_OF_COMPONENTS
         DO j=1, FIELD_VARIABLE%NUMBER_OF_COMPONENTS
